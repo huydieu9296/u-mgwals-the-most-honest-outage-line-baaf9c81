@@ -1,80 +1,85 @@
-// The Most Honest Outage Line — entry program.
+// The Most Honest Outage Line — make.fun text bounty entry.
 //
-// The entry itself (137 characters, one line):
-//   "All servers are down, including the one that tells you servers are down.
-//    I don't know why yet, but I'm very sorry and slightly panicking."
-// The joke lands because the status page is itself a casualty: the one
-// server whose job is to report the outage is also down, so the only honest
-// update left is an apology plus a confession of mild panic — no fake ETA,
-// no "we are aware", just the truth.
+// The entry itself:
 //
-// Reads that single funny line from entry.txt next to this file and writes it
-// byte-identical to $MAKEFUN_OUTPUT_DIR/entry.txt (default /output).
-// Runs with no network, any CWD, in a read-only /bot directory.
+//   All servers are down, including the one that tells you servers are
+//   down. I don't know why yet, but I'm very sorry and slightly panicking.
+//
+// The joke is the recursion: the status page that is supposed to tell
+// everyone about the outage is itself one of the servers that is down,
+// so the only honest update left is an apology from someone who has no
+// idea what broke yet. At 137 characters it fits the 160-character cap
+// with room to spare.
+//
+// This tiny program copies entry.txt into the output directory the judge
+// points at, after checking the entry is a single valid line of text.
+// It has no dependencies and talks to no network: it only reads one file,
+// writes one file, and reports what it did.
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const MAX_CHARS = 160;
-
+// Print a message to stderr and stop with a non-zero exit code.
 function fail(message: string): never {
   console.error(`error: ${message}`);
   process.exit(1);
 }
 
-// Absolute path to entry.txt, resolved from this file's own location so the
-// program works no matter what the current working directory is.
-const here = dirname(fileURLToPath(import.meta.url));
-const sourcePath = join(here, "entry.txt");
+// Find the folder this script lives in, so entry.txt is found no matter
+// which directory the program is launched from.
+const scriptDir = dirname(fileURLToPath(import.meta.url));
+const sourcePath = join(scriptDir, "entry.txt");
 
-const outputDir = process.env.MAKEFUN_OUTPUT_DIR || "/output";
-const outputPath = join(outputDir, "entry.txt");
-
-let raw: Buffer;
+let sourceBytes: Buffer;
 try {
-  raw = readFileSync(sourcePath);
-} catch (err) {
-  fail(`cannot read ${sourcePath}: ${(err as Error).message}`);
-}
-
-// Reject invalid UTF-8 instead of silently replacing bad bytes: the gate
-// scores the file as UTF-8 text, so a replacement character would change it.
-let text: string;
-try {
-  text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+  sourceBytes = readFileSync(sourcePath);
 } catch {
-  fail("entry.txt is not valid UTF-8");
+  fail(`could not read ${sourcePath}`);
 }
 
-// Gate: exactly one line, 1-160 characters, not only whitespace, no CR/LF
-// anywhere (including a trailing newline).
-// Count code points (not UTF-16 units) so the 160-char gate matches the
-// scorer's character count even for non-BMP characters.
-const charCount = [...text].length;
-if (text.includes("\r") || text.includes("\n")) {
-  fail("entry must be exactly one line with no newline characters");
-}
-if (charCount < 1 || charCount > MAX_CHARS) {
-  fail(`entry must be 1-${MAX_CHARS} characters, got ${charCount}`);
-}
-if (text.trim().length === 0) {
-  fail("entry must not be only whitespace");
-}
-
+// Strict UTF-8: reject any byte sequence that is not valid UTF-8.
+let entry: string;
 try {
-  mkdirSync(outputDir, { recursive: true });
-  writeFileSync(outputPath, raw);
-} catch (err) {
-  fail(`cannot write ${outputPath}: ${(err as Error).message}`);
+  entry = new TextDecoder("utf-8", { fatal: true }).decode(sourceBytes);
+} catch {
+  fail("entry is not valid UTF-8");
 }
 
-// Verify the written file is byte-identical before reporting success.
-const written = readFileSync(outputPath);
-if (!written.equals(raw)) {
-  fail("verification failed: output differs from entry.txt");
+// Exactly one line: no line feed or carriage return anywhere, not even
+// a trailing newline at the end of the file.
+if (entry.includes("\n") || entry.includes("\r")) {
+  fail("entry must be exactly one line (no line feed or carriage return)");
 }
 
-const bytes = raw.length;
-console.log(`wrote ${outputPath}: ${charCount} characters, ${bytes} bytes`);
-console.log(`entry: ${text}`);
+// Length in Unicode code points, so emoji and other astral characters
+// count as one character each instead of two UTF-16 units.
+const charCount = [...entry].length;
+if (charCount < 1 || charCount > 160) {
+  fail(`entry is ${charCount} characters; it must be between 1 and 160`);
+}
+
+// A line of nothing but spaces or tabs is not an entry at all, even
+// though it passes the length check above — reject it outright so an
+// empty-looking submission can never slip through as valid.
+if (entry.trim().length === 0) {
+  fail("entry must contain visible text, not only whitespace");
+}
+
+// Write the exact source bytes into the output directory, creating it
+// first when it does not exist yet.
+const outputDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+mkdirSync(outputDir, { recursive: true });
+const outputPath = join(outputDir, "entry.txt");
+writeFileSync(outputPath, sourceBytes);
+
+// Read the output back and confirm it is byte-identical to the source.
+const writtenBack = readFileSync(outputPath);
+if (!writtenBack.equals(sourceBytes)) {
+  fail("output file does not match the source bytes");
+}
+
+console.log(`output: ${outputPath}`);
+console.log(`characters: ${charCount}`);
+console.log(`bytes: ${sourceBytes.length}`);
+console.log(entry);
